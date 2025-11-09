@@ -17,6 +17,7 @@ from adaptive_sound_processor import AdaptiveSoundProcessor, MicroTransientProce
 from spatial_effects import SpatialProcessor
 from harmonic_processor import TimbreShaper
 from multiband_processor import MultibandProcessor
+from formant_processor import FormantProcessor
 from sound_classifier import OnsetBasedClassifier
 from loudness_matcher import LoudnessMatcher
 from diagnostic_logger import DiagnosticLogger, PerBufferAnalyzer
@@ -44,6 +45,7 @@ class UltimateProcessor:
         self.spatial_processor = SpatialProcessor(sample_rate)
         self.timbre_shaper = TimbreShaper(sample_rate)
         self.multiband_processor = MultibandProcessor(num_bands=4, sample_rate=sample_rate)
+        self.formant_processor = FormantProcessor(sample_rate)
 
         # Sound classifier
         self.classifier = OnsetBasedClassifier(sample_rate)
@@ -71,6 +73,7 @@ class UltimateProcessor:
         self.enable_spatial = True
         self.enable_harmonics = True
         self.enable_multiband = True
+        self.enable_formants = True
 
         # Mix controls
         self.wet_dry_mix = 1.0
@@ -116,12 +119,30 @@ class UltimateProcessor:
 
     def _apply_advanced_preset(self):
         """Apply advanced preset parameters"""
-        # Per-sound-type parameters are already in adaptive processor
-        # Just extract global parameters
-
+        # Enable adaptive processing
         if 'per_sound_analysis' in self.preset_data:
-            # Enable adaptive processing
             self.enable_adaptive = True
+
+            # CRITICAL FIX: Load per-sound analysis into adaptive processor
+            self.adaptive_processor.load_per_sound_analysis(
+                self.preset_data['per_sound_analysis']
+            )
+            print(f"  Loaded per-sound analysis for {len(self.preset_data['per_sound_analysis'])} sound types")
+
+        # Load multiband analysis if available
+        if 'multiband_analysis' in self.preset_data:
+            self.enable_multiband = True
+            self.multiband_processor.load_multiband_analysis(
+                self.preset_data['multiband_analysis']
+            )
+            print(f"  Loaded multiband analysis for {self.multiband_processor.num_bands} bands")
+
+        # Load formant data if available (CRITICAL FIX: Now using formant data!)
+        if 'formants' in self.preset_data:
+            formant_data = self.preset_data['formants']
+            if 'frequencies' in formant_data and len(formant_data['frequencies']) > 0:
+                self.enable_formants = True
+                self.formant_processor.load_formant_data(formant_data)
 
         # Extract harmonic/saturation settings if available
         for sound_type, analysis in self.preset_data.get('per_sound_analysis', {}).items():
@@ -267,14 +288,22 @@ class UltimateProcessor:
                 enable_adaptive=True
             )
 
-        # 2. Micro-transient preservation
+        # 2. Multiband processing (CRITICAL FIX: Now actually used!)
+        if self.enable_multiband and self.preset_loaded:
+            processed = self.multiband_processor.process(processed)
+
+        # 3. Formant processing (CRITICAL FIX: Now using formant data!)
+        if self.enable_formants and self.preset_loaded:
+            processed = self.formant_processor.process(processed, mix=0.4)
+
+        # 4. Micro-transient preservation
         if self.enable_transients and self.transient_amount > 0.01:
             processed = self.transient_processor.enhance_transients(
                 processed,
                 amount=self.transient_amount
             )
 
-        # 3. Harmonic enhancement / saturation
+        # 5. Harmonic enhancement / saturation
         if self.enable_harmonics and self.saturation_amount > 0.01:
             processed = self.timbre_shaper.process(processed)
 

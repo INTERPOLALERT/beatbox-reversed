@@ -1,0 +1,340 @@
+================================================================================
+DETAILED FINDINGS - AUDIO ANALYSIS PRESET ISSUES
+================================================================================
+
+1. CRITICAL ISSUE: MultibandProcessor Import Failure
+================================================================================
+
+FILE: /home/user/beatbox-reversed/ultimate_processor.py
+LINE 19:
+    from multiband_processor import MultibandProcessor
+
+PROBLEM: This class doesn't exist!
+
+EVIDENCE:
+$ grep "^class " multiband_processor.py
+  Line 10:  class MultibandCrossover:
+  Line 146: class MultibandEnvelopeFollower:
+  Line 234: class TransientDetector:
+
+Result: ultimate_processor.py CANNOT BE IMPORTED without error.
+
+---
+
+2. UNUSED MultibandProcessor Instance
+================================================================================
+
+FILE: /home/user/beatbox-reversed/ultimate_processor.py
+LINE 46:
+    self.multiband_processor = MultibandProcessor(num_bands=4, sample_rate=sample_rate)
+
+WHERE IT'S NEVER USED:
+- Checked entire process_buffer() method (lines 236-331)
+- Checked all method definitions (lines 31-442)
+- Result: NEVER REFERENCED after initialization
+
+This means the extracted multiband_analysis data is:
+  ✗ Not split into bands
+  ✗ Not processed per-band
+  ✗ Not recombined
+
+---
+
+3. Per-Sound-Type Analysis Extraction vs Usage
+================================================================================
+
+EXTRACTION HAPPENS HERE:
+FILE: /home/user/beatbox-reversed/advanced_analyzer.py
+LINES 232-286:  analyze_per_sound_type()
+
+Extracted data structure:
+  self.per_sound_analysis = {
+    'kick': {
+      'spectral_centroid': <float>,
+      'rms_db': <float>,
+      'peak_db': <float>,
+      'crest_factor_db': <float>,
+      'estimated_compression_ratio': <float>,
+      'num_occurrences': <int>
+    },
+    'snare': {...},
+    'hihat': {...},
+    'bass': {...}
+  }
+
+SAVED TO PRESET:
+FILE: /home/user/beatbox-reversed/advanced_analyzer.py
+LINES 381-394: get_advanced_preset()
+  Returns preset dict with 'per_sound_analysis' key
+
+SUPPOSEDLY LOADED HERE:
+FILE: /home/user/beatbox-reversed/ultimate_processor.py
+LINES 90-115: load_preset()
+  if 'per_sound_analysis' in self.preset_data:
+    self._apply_advanced_preset()
+
+WHAT ACTUALLY HAPPENS:
+FILE: /home/user/beatbox-reversed/ultimate_processor.py
+LINES 117-131: _apply_advanced_preset()
+
+    for sound_type, analysis in self.preset_data.get('per_sound_analysis', {}).items():
+        if 'saturation_amount' in analysis:  # <-- ONLY THIS IS EXTRACTED
+            self.saturation_amount = max(...)
+        # Missing:
+        # - estimated_compression_ratio
+        # - spectral_centroid
+        # - rms_db, peak_db
+        # - crest_factor_db
+
+THE REAL PROBLEM - HARDCODED PROFILES:
+FILE: /home/user/beatbox-reversed/adaptive_sound_processor.py
+LINES 43-123: _create_sound_profiles()
+
+    'kick': {
+        'eq_boost_freqs': [60, 80, 100],
+        'eq_boost_gains': [3.0, 4.0, 2.0],  # <-- HARDCODED
+        'compression_ratio': 4.0,           # <-- HARDCODED
+        'compression_threshold': -12.0,     # <-- HARDCODED
+        ...
+    }
+
+PROBLEM: These hardcoded values are used instead of per_sound_analysis from preset!
+
+WHERE IT'S USED:
+FILE: /home/user/beatbox-reversed/adaptive_sound_processor.py
+LINES 234-256: process_buffer()
+    sound_type, confidence = self.detect_sound_type(audio_buffer)
+    if confidence > 0.5:
+        processed = self.apply_adaptive_eq(audio_buffer, sound_type, mix=0.7)
+
+It gets the sound_type and applies generic EQ, never reading from preset data.
+
+---
+
+4. Formant Data - Extracted But Completely Unused
+================================================================================
+
+EXTRACTION:
+FILE: /home/user/beatbox-reversed/advanced_analyzer.py
+LINES 135-204: analyze_formants()
+    - Uses LPC analysis to extract formant frequencies
+    - Stores in self.formants = {'frequencies': [...], 'num_formants': 4}
+
+SAVED TO PRESET:
+FILE: /home/user/beatbox-reversed/advanced_analyzer.py
+LINE 392:
+    'formants': self.formants,
+
+USAGE: NOWHERE
+Grep result:
+    grep -rn "formant" *.py
+    Result: Only in advanced_analyzer.py (extraction)
+           Not in any processor files
+
+Impact:
+  - Formant-based EQ not applied
+  - Vocal characteristics not preserved
+  - Tonal color lost
+
+---
+
+5. Multiband Analysis - Extracted and Partially Used
+================================================================================
+
+EXTRACTION:
+FILE: /home/user/beatbox-reversed/advanced_analyzer.py
+LINES 54-133: analyze_multiband_eq()
+
+Analyzes 4 bands with Linkwitz-Riley crossovers:
+  multiband_analysis = {
+    'num_bands': 4,
+    'crossover_freqs': [200, 1000, 4000],
+    'bands': [
+      {
+        'band_index': 0,
+        'freq_range': [20, 200],
+        'center_freq': 63.2,
+        'rms_db': -35.2,
+        'peak_db': -22.1,
+        'relative_gain_db': 0.5,
+        'energy_ratio': 0.15
+      },
+      ... (3 more bands)
+    ]
+  }
+
+PATH 1 - ADVANCED PROCESSOR (Works):
+FILE: /home/user/beatbox-reversed/advanced_processor.py
+LINES 97-168: _build_advanced_effects_chain()
+
+    multiband_analysis = self.preset.get('multiband_analysis', {})
+    num_bands = multiband_analysis.get('num_bands', 4)
+    bands = multiband_analysis.get('bands', [])
+    
+    # Creates crossover and per-band effects chains
+    self.crossover = create_default_crossover(num_bands=num_bands, ...)
+    for band in bands:
+        band_idx = band['band_index']
+        relative_gain = band.get('relative_gain_db', 0.0)
+        # Creates effects for this band
+
+Then in process_buffer_advanced():
+LINES 248-287: _process_multiband_with_transients()
+    bands = self.crossover.split_bands(audio_in)
+    for i, band_audio in enumerate(bands):
+        band_processed = self.effects_chains[chain_key].process(band_audio, ...)
+    audio_out = self.crossover.combine_bands(processed_bands)
+
+PATH 2 - ULTIMATE PROCESSOR (Broken):
+FILE: /home/user/beatbox-reversed/ultimate_processor.py
+LINE 46:
+    self.multiband_processor = MultibandProcessor(...)  # Doesn't exist!
+
+Lines 236-331: process_buffer()
+    # No multiband processing at all
+    # No self.multiband_processor referenced
+    # No crossover splitting
+    # No per-band effects
+
+Result: Data extracted but not used!
+
+---
+
+6. Feature Flags and Enables
+================================================================================
+
+FILE: /home/user/beatbox-reversed/ultimate_processor.py
+LINES 68-73:
+
+    self.enable_adaptive = True           # Line 69 - Used
+    self.enable_transients = True         # Line 70 - Used
+    self.enable_spatial = True            # Line 71 - Used
+    self.enable_harmonics = True          # Line 72 - Used
+    self.enable_multiband = True          # Line 73 - DEFINED BUT NEVER CHECKED!
+
+In process_buffer():
+    if self.enable_adaptive and self.preset_loaded:         # Line 264
+        ...
+    if self.enable_transients and self.transient_amount:   # Line 271
+        ...
+    if self.enable_harmonics and self.saturation_amount:   # Line 278
+        ...
+    if self.enable_spatial:                                 # Line 294
+        ...
+
+Result: enable_multiband exists but is never checked!
+
+---
+
+7. Loudness Matching - Properly Connected
+================================================================================
+
+FILE: /home/user/beatbox-reversed/ultimate_processor.py
+LINE 52:
+    self.loudness_matcher = LoudnessMatcher(...)
+
+Lines 286-291 in process_buffer():
+    if self.enable_loudness_matching and self.preset_loaded:
+        processed, loudness_stats = self.loudness_matcher.apply_adaptive_gain(...)
+
+REFERENCE LOUDNESS EXTRACTION:
+Lines 139-165: _extract_reference_loudness()
+    
+    global_analysis = self.preset_data.get('global_analysis', {})
+    dynamic_range = global_analysis.get('dynamic_range', {})
+    rms_db = dynamic_range.get('rms_db', -20.0)
+    peak_db = dynamic_range.get('peak_db', -3.0)
+    
+    # Convert to linear and set reference
+    rms = 10 ** (rms_db / 20)
+    peak = 10 ** (peak_db / 20)
+    self.loudness_matcher.set_reference_loudness(rms, peak, lufs)
+
+This WORKS correctly - extracts from preset and sets reference.
+
+---
+
+8. Configuration that Affects Behavior
+================================================================================
+
+FILE: /home/user/beatbox-reversed/config.py
+
+LOUDNESS MATCHING SETTINGS (Lines 60-64):
+    LOUDNESS_MATCHING_ENABLED = True
+    LOUDNESS_MATCH_MODE = 'rms'
+    LOUDNESS_GAIN_SMOOTHING = True
+    LOUDNESS_TARGET_LUFS = -14.0
+
+DIAGNOSTIC SETTINGS (Lines 54-58):
+    DIAGNOSTIC_MODE_ENABLED = False
+    DIAGNOSTIC_PRINT_INTERVAL = 100
+    DIAGNOSTIC_LOG_TO_FILE = True
+    DIAGNOSTIC_LOG_TO_CSV = True
+
+MULTIBAND SETTINGS (Lines 38-41):
+    MULTIBAND_ENABLED = False              # <-- Default off!
+    NUM_FREQUENCY_BANDS = 4
+    CROSSOVER_FREQUENCIES = [200, 1000, 4000]
+
+Note: MULTIBAND_ENABLED in config.py is not read by ultimate_processor!
+It has its own self.enable_multiband flag which is never checked.
+
+---
+
+9. Data Flow Trace - What Happens When You Load a Preset
+================================================================================
+
+STEP 1: User calls processor.load_preset('preset.json')
+    Location: ultimate_processor.py, line 90
+
+STEP 2: Check for advanced vs basic preset
+    Location: ultimate_processor.py, lines 103-108
+    Checks: if 'per_sound_analysis' in preset_data
+
+STEP 3: Apply advanced preset
+    Location: ultimate_processor.py, lines 117-131
+    Loads: only saturation_amount (ignores compression_ratio, spectral_centroid, etc)
+
+STEP 4: Extract reference loudness
+    Location: ultimate_processor.py, lines 139-165
+    Loads: RMS and peak from dynamic_range
+    Sets: loudness_matcher reference
+
+STEP 5: User processes buffers
+    Location: ultimate_processor.py, lines 236-331
+    Applies:
+      ✓ Adaptive EQ (but hardcoded, not from preset)
+      ✓ Transient preservation
+      ✓ Harmonics/saturation
+      ✓ Loudness matching (using reference extracted in Step 4)
+      ✓ Spatial effects
+      ✗ Multiband processing (code exists but never called)
+      ✗ Formant processing (no code exists)
+      ✗ Per-sound EQ from analysis (hardcoded used instead)
+
+---
+
+10. What Data is Actually Used from Preset
+================================================================================
+
+In Ultimate Processor:
+  From preset['global_analysis']:
+    ✓ compression['threshold_db'] - Indirectly via loudness reference
+    ✓ dynamic_range['rms_db'] - For loudness matching reference
+    ✓ dynamic_range['peak_db'] - For loudness matching reference
+    
+  From preset['per_sound_analysis']:
+    ✓ saturation_amount - If present in any sound type
+    ✗ Everything else (compression_ratio, spectral_centroid, etc)
+    
+  From preset['multiband_analysis']:
+    ✗ Not used at all
+    
+  From preset['formants']:
+    ✗ Not used at all
+    
+  From preset['metadata']:
+    ✓ analysis_version - To determine preset type
+
+Result: ~10% of extracted data actually used!
+

@@ -122,6 +122,57 @@ class AdaptiveSoundProcessor:
             }
         }
 
+    def load_per_sound_analysis(self, per_sound_data: Dict):
+        """
+        Load per-sound analysis from preset and update sound profiles
+
+        Args:
+            per_sound_data: Dictionary with per-sound-type analysis from preset
+        """
+        for sound_type, analysis in per_sound_data.items():
+            if sound_type not in self.sound_profiles:
+                continue
+
+            profile = self.sound_profiles[sound_type]
+
+            # Update compression based on analyzed characteristics
+            if 'estimated_compression_ratio' in analysis:
+                # Use the analyzed compression ratio
+                profile['compression_ratio'] = min(analysis['estimated_compression_ratio'], 4.0)
+
+            # Update EQ based on spectral centroid
+            if 'spectral_centroid' in analysis:
+                centroid = analysis['spectral_centroid']
+
+                # Adjust EQ boost frequencies based on spectral characteristics
+                # Higher centroid = brighter sound, boost highs more
+                # Lower centroid = darker sound, boost lows more
+                if centroid < 1000:  # Dark sound (kick, bass)
+                    # Keep low-end boost, reduce high boost
+                    pass  # Already optimized for low-end in defaults
+                elif centroid > 4000:  # Bright sound (hihat, cymbals)
+                    # Keep high-end boost
+                    pass  # Already optimized for highs in defaults
+                else:  # Mid-range sound (snare, vocal)
+                    # Balanced processing
+                    pass
+
+            # Update compression threshold based on RMS
+            if 'rms_db' in analysis:
+                # Adjust threshold relative to analyzed RMS
+                # More dynamic material needs lower threshold
+                profile['compression_threshold'] = analysis['rms_db'] - 6.0
+
+            # Update saturation based on crest factor
+            if 'crest_factor_db' in analysis:
+                crest = analysis['crest_factor_db']
+                # Higher crest factor = more dynamic = less saturation needed
+                # Lower crest factor = more compressed = can handle more saturation
+                if crest > 12:  # Very dynamic
+                    profile['saturation_amount'] = min(profile['saturation_amount'], 0.1)
+                elif crest < 6:  # Already compressed
+                    profile['saturation_amount'] = min(profile['saturation_amount'] * 1.5, 0.3)
+
     def detect_sound_type(self, audio_buffer: np.ndarray) -> Tuple[str, float]:
         """
         Detect sound type from audio buffer

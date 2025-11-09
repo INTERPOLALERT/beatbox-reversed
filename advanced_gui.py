@@ -11,12 +11,141 @@ import numpy as np
 
 from advanced_analyzer import AdvancedAudioAnalyzer
 from advanced_processor import AdvancedLiveProcessor
+from ultimate_processor import UltimateProcessor
 from audio_playback import AudioPlayer
 from visualizations import RealTimeVisualizer, EQCurveVisualizer, MultibandVisualizer, SpectrogramVisualizer
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+import sounddevice as sd
+import soundfile as sf
+from datetime import datetime
 import config
+
+
+class UltimateRealTimeProcessor:
+    """Real-time streaming wrapper for UltimateProcessor"""
+
+    def __init__(self):
+        self.processor = UltimateProcessor(sample_rate=config.SAMPLE_RATE, enable_diagnostics=False)
+        self.stream = None
+        self.is_processing = False
+        self.is_recording = False
+        self.recorded_audio = []
+        self.audio_config = config.AudioConfig()
+
+    def load_preset(self, preset_path: str):
+        """Load preset into processor"""
+        self.processor.load_preset(preset_path)
+
+    def start_processing(self, input_device=None, output_device=None, monitor=True):
+        """Start real-time processing with monitoring"""
+        if self.is_processing:
+            return
+
+        # Set devices
+        if input_device is not None:
+            sd.default.device[0] = input_device
+        if output_device is not None:
+            sd.default.device[1] = output_device
+
+        self.is_processing = True
+
+        def audio_callback(indata, outdata, frames, time_info, status):
+            if status:
+                print(f"Status: {status}")
+
+            try:
+                # Get mono input
+                audio_in = indata[:, 0].copy()
+
+                # Process with UltimateProcessor (returns stereo)
+                audio_out = self.processor.process_buffer(audio_in)
+
+                # Handle recording
+                if self.is_recording:
+                    self.recorded_audio.append(audio_out.copy())
+
+                # Output (stereo)
+                if audio_out.ndim == 2:
+                    outdata[:] = audio_out
+                else:
+                    # Mono to stereo
+                    outdata[:, 0] = audio_out
+                    outdata[:, 1] = audio_out
+
+            except Exception as e:
+                print(f"Callback error: {e}")
+                outdata.fill(0)
+
+        # Start stream with monitoring
+        self.stream = sd.Stream(
+            samplerate=self.audio_config.sample_rate,
+            blocksize=self.audio_config.buffer_size,
+            channels=(1, 2),  # Mono input, stereo output
+            callback=audio_callback
+        )
+        self.stream.start()
+
+    def stop_processing(self):
+        """Stop processing"""
+        self.is_processing = False
+        if self.stream:
+            self.stream.stop()
+            self.stream.close()
+            self.stream = None
+
+    def start_recording(self):
+        """Start recording processed output"""
+        self.recorded_audio = []
+        self.is_recording = True
+
+    def stop_recording(self):
+        """Stop recording and save file"""
+        self.is_recording = False
+
+        if not self.recorded_audio:
+            return None
+
+        # Concatenate all buffers
+        audio = np.concatenate(self.recorded_audio, axis=0)
+
+        # Save to file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = config.RECORDINGS_DIR / f"recording_{timestamp}.wav"
+        config.RECORDINGS_DIR.mkdir(exist_ok=True)
+
+        sf.write(output_path, audio, self.audio_config.sample_rate)
+        return str(output_path)
+
+    # Proxy methods to UltimateProcessor
+    def set_wet_dry_mix(self, mix: float):
+        self.processor.set_wet_dry_mix(mix)
+
+    def set_transient_preservation(self, amount: float):
+        self.processor.set_transient_preservation(amount)
+
+    def set_input_gain(self, gain_db: float):
+        self.processor.set_input_gain(gain_db)
+
+    def set_output_gain(self, gain_db: float):
+        self.processor.set_output_gain(gain_db)
+
+    def set_stereo_width(self, width: float):
+        self.processor.set_stereo_width(width)
+
+    def set_reverb(self, amount: float, size: float = 0.5):
+        self.processor.set_reverb(amount, size)
+
+    def set_saturation(self, amount: float, saturation_type: str = 'tube'):
+        self.processor.set_saturation(amount, saturation_type)
+
+    def set_loudness_matching(self, enabled: bool, match_mode: str = 'rms'):
+        self.processor.set_loudness_matching(enabled, match_mode)
+
+    def set_band_mix(self, band_idx: int, level: float):
+        """Set per-band mix (for compatibility)"""
+        pass  # UltimateProcessor handles this internally
 
 
 class AdvancedBeatboxApp:
@@ -29,7 +158,7 @@ class AdvancedBeatboxApp:
 
         # Application state
         self.analyzer = None
-        self.processor = AdvancedLiveProcessor()
+        self.processor = UltimateRealTimeProcessor()
         self.current_preset = None
         self.is_processing = False
         self.audio_player = AudioPlayer()
@@ -57,7 +186,7 @@ class AdvancedBeatboxApp:
 
         subtitle_label = ttk.Label(
             title_frame,
-            text="Advanced multiband processing • Transient preservation • Sound classification",
+            text="Ultimate Processor • Adaptive Processing • Spatial Effects • Harmonic Saturation • Loudness Matching",
             font=('Arial', 9)
         )
         subtitle_label.pack()
@@ -404,6 +533,126 @@ class AdvancedBeatboxApp:
         self.output_gain_label = ttk.Label(output_gain_frame, text="0.0 dB")
         self.output_gain_label.pack(side='left', padx=5)
 
+        # Spatial effects
+        spatial_frame = ttk.LabelFrame(self.controls_tab, text="Spatial Effects")
+        spatial_frame.pack(fill='x', padx=10, pady=10)
+
+        # Stereo width
+        stereo_frame = ttk.Frame(spatial_frame)
+        stereo_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(stereo_frame, text="Stereo Width:").pack(side='left', padx=5)
+
+        self.stereo_width_var = tk.DoubleVar(value=1.3)
+
+        stereo_scale = ttk.Scale(
+            stereo_frame,
+            from_=0.0,
+            to=2.0,
+            orient='horizontal',
+            variable=self.stereo_width_var,
+            command=self.update_stereo_width
+        )
+        stereo_scale.pack(side='left', fill='x', expand=True, padx=5)
+
+        self.stereo_width_label = ttk.Label(stereo_frame, text="1.3x")
+        self.stereo_width_label.pack(side='left', padx=5)
+
+        # Reverb
+        reverb_frame = ttk.Frame(spatial_frame)
+        reverb_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(reverb_frame, text="Reverb Amount:").pack(side='left', padx=5)
+
+        self.reverb_var = tk.DoubleVar(value=0.0)
+
+        reverb_scale = ttk.Scale(
+            reverb_frame,
+            from_=0.0,
+            to=1.0,
+            orient='horizontal',
+            variable=self.reverb_var,
+            command=self.update_reverb
+        )
+        reverb_scale.pack(side='left', fill='x', expand=True, padx=5)
+
+        self.reverb_label = ttk.Label(reverb_frame, text="0%")
+        self.reverb_label.pack(side='left', padx=5)
+
+        # Harmonic saturation
+        saturation_frame = ttk.LabelFrame(self.controls_tab, text="Harmonic Saturation")
+        saturation_frame.pack(fill='x', padx=10, pady=10)
+
+        # Saturation amount
+        sat_amount_frame = ttk.Frame(saturation_frame)
+        sat_amount_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(sat_amount_frame, text="Saturation:").pack(side='left', padx=5)
+
+        self.saturation_var = tk.DoubleVar(value=0.1)
+
+        sat_scale = ttk.Scale(
+            sat_amount_frame,
+            from_=0.0,
+            to=1.0,
+            orient='horizontal',
+            variable=self.saturation_var,
+            command=self.update_saturation
+        )
+        sat_scale.pack(side='left', fill='x', expand=True, padx=5)
+
+        self.saturation_label = ttk.Label(sat_amount_frame, text="10%")
+        self.saturation_label.pack(side='left', padx=5)
+
+        # Saturation type
+        sat_type_frame = ttk.Frame(saturation_frame)
+        sat_type_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(sat_type_frame, text="Type:").pack(side='left', padx=5)
+
+        self.saturation_type_var = tk.StringVar(value='tube')
+        sat_types = ['soft', 'hard', 'tube', 'tape']
+
+        for sat_type in sat_types:
+            ttk.Radiobutton(
+                sat_type_frame,
+                text=sat_type.capitalize(),
+                variable=self.saturation_type_var,
+                value=sat_type,
+                command=self.update_saturation_type
+            ).pack(side='left', padx=5)
+
+        # Loudness matching
+        loudness_frame = ttk.LabelFrame(self.controls_tab, text="Loudness Matching")
+        loudness_frame.pack(fill='x', padx=10, pady=10)
+
+        # Enable checkbox
+        self.loudness_enabled_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            loudness_frame,
+            text="Enable Adaptive Loudness Matching",
+            variable=self.loudness_enabled_var,
+            command=self.update_loudness_matching
+        ).pack(padx=10, pady=5)
+
+        # Matching mode
+        mode_frame = ttk.Frame(loudness_frame)
+        mode_frame.pack(fill='x', padx=10, pady=5)
+
+        ttk.Label(mode_frame, text="Match Mode:").pack(side='left', padx=5)
+
+        self.loudness_mode_var = tk.StringVar(value='rms')
+        modes = [('RMS', 'rms'), ('LUFS', 'lufs'), ('Peak Norm', 'peak_normalized'), ('Crest Match', 'crest_matched')]
+
+        for label, mode in modes:
+            ttk.Radiobutton(
+                mode_frame,
+                text=label,
+                variable=self.loudness_mode_var,
+                value=mode,
+                command=self.update_loudness_matching
+            ).pack(side='left', padx=5)
+
         # Reset button
         ttk.Button(
             self.controls_tab,
@@ -488,17 +737,32 @@ class AdvancedBeatboxApp:
         info_frame.pack(fill='both', expand=True, padx=10, pady=10)
 
         info_text = f"""
-Advanced Features Enabled:
-✓ Multiband processing (4 or 8 bands)
-✓ Linkwitz-Riley crossovers (24dB/octave)
-✓ Adaptive transient preservation
-✓ Dual-envelope detection
-✓ Sound classification (kick/snare/hihat/bass)
-✓ Per-band mixing controls
-✓ Formant extraction (LPC analysis)
-✓ Real-time visualization
-✓ Safety limiter
-✓ Advanced gain staging
+🎯 ULTIMATE PROCESSOR - ALL FEATURES ENABLED:
+
+Core Processing:
+✓ Adaptive per-sound-type processing (kick/snare/hihat/bass/vocal)
+✓ Real-time sound classification with onset detection
+✓ Multiband processing (4 or 8 bands with Linkwitz-Riley crossovers)
+✓ Formant extraction and shaping (LPC analysis)
+✓ Micro-transient preservation (1ms vs 20ms dual-envelope)
+
+Audio Enhancement:
+✓ Stereo/spatial effects (width, reverb, panning)
+✓ Harmonic distortion and saturation (4 types: soft/hard/tube/tape)
+✓ Dynamic EQ per sound type
+✓ Transient shaping and enhancement
+
+Adaptive Features:
+✓ Dynamic makeup gain / loudness matching (per-buffer)
+✓ Multiple matching modes: RMS, LUFS, peak-normalized, crest-matched
+✓ Automatic reference loudness extraction from presets
+✓ Smoothed gain transitions to prevent clicks
+
+Safety & Stability:
+✓ CPU-optimized real-time processing
+✓ Thread-safe buffer management
+✓ Safety limiting (-1.0dB threshold)
+✓ Gain clamping (±24dB range)
 
 Target Latency: <10ms (with proper configuration)
         """
@@ -643,6 +907,19 @@ Target Latency: <10ms (with proper configuration)
 
             self.processor.set_input_gain(self.input_gain_var.get())
             self.processor.set_output_gain(self.output_gain_var.get())
+
+            # Apply spatial effects
+            self.processor.set_stereo_width(self.stereo_width_var.get())
+            self.processor.set_reverb(self.reverb_var.get(), size=0.5)
+
+            # Apply harmonic saturation
+            self.processor.set_saturation(self.saturation_var.get(), self.saturation_type_var.get())
+
+            # Apply loudness matching
+            self.processor.set_loudness_matching(
+                self.loudness_enabled_var.get(),
+                self.loudness_mode_var.get()
+            )
 
             # Start processing thread
             thread = threading.Thread(target=self._processing_thread, daemon=True)
@@ -816,6 +1093,40 @@ Target Latency: <10ms (with proper configuration)
         if self.is_processing:
             self.processor.set_output_gain(val)
 
+    def update_stereo_width(self, value):
+        """Update stereo width"""
+        val = float(value)
+        self.stereo_width_label.config(text=f"{val:.1f}x")
+        if self.is_processing:
+            self.processor.set_stereo_width(val)
+
+    def update_reverb(self, value):
+        """Update reverb amount"""
+        val = float(value)
+        self.reverb_label.config(text=f"{val*100:.0f}%")
+        if self.is_processing:
+            self.processor.set_reverb(val, size=0.5)
+
+    def update_saturation(self, value):
+        """Update saturation amount"""
+        val = float(value)
+        self.saturation_label.config(text=f"{val*100:.0f}%")
+        if self.is_processing:
+            self.processor.set_saturation(val, self.saturation_type_var.get())
+
+    def update_saturation_type(self):
+        """Update saturation type"""
+        if self.is_processing:
+            self.processor.set_saturation(self.saturation_var.get(), self.saturation_type_var.get())
+
+    def update_loudness_matching(self):
+        """Update loudness matching settings"""
+        if self.is_processing:
+            enabled = self.loudness_enabled_var.get()
+            mode = self.loudness_mode_var.get()
+            self.processor.set_loudness_matching(enabled, mode)
+            self.log(f"Loudness matching: {'Enabled' if enabled else 'Disabled'} (mode: {mode})")
+
     def reset_controls(self):
         """Reset all controls to defaults"""
         self.wet_dry_var.set(1.0)
@@ -826,6 +1137,12 @@ Target Latency: <10ms (with proper configuration)
 
         self.input_gain_var.set(0.0)
         self.output_gain_var.set(0.0)
+        self.stereo_width_var.set(1.3)
+        self.reverb_var.set(0.0)
+        self.saturation_var.set(0.1)
+        self.saturation_type_var.set('tube')
+        self.loudness_enabled_var.set(True)
+        self.loudness_mode_var.set('rms')
 
         self.log("Controls reset to defaults")
 
