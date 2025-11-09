@@ -109,8 +109,20 @@ class AdvancedAudioAnalyzer:
         mid_band_idx = num_bands // 2
         reference_rms = band_analysis[mid_band_idx]['rms_db']
 
+        # CRITICAL FIX: Apply scaling + clamping to prevent mastering artifacts
+        # from producing extreme multiband EQ values
+        SCALING_FACTOR = 0.20  # Same as single-band EQ
         for band in band_analysis:
-            band['relative_gain_db'] = band['rms_db'] - reference_rms
+            # Step 1: Normalize to reference band
+            relative_gain = band['rms_db'] - reference_rms
+
+            # Step 2: Apply scaling factor
+            scaled_gain = relative_gain * SCALING_FACTOR
+
+            # Step 3: Clamp to ±6 dB for live stability
+            clamped_gain = np.clip(scaled_gain, -6.0, 6.0)
+
+            band['relative_gain_db'] = float(clamped_gain)
 
         self.multiband_analysis = {
             'num_bands': num_bands,
@@ -305,20 +317,26 @@ class AdvancedAudioAnalyzer:
         }
 
     def _estimate_compression_from_crest(self, crest_factor_db: float) -> float:
-        """Estimate compression ratio from crest factor"""
+        """
+        Estimate compression ratio from crest factor
+
+        CRITICAL FIX: Cap at 4:1 for live mic stability (was 8:1)
+        Mastered tracks show low crest factors but we need realistic live ratios
+        """
         # Typical uncompressed: 12-20 dB crest factor
-        # Heavily compressed: 3-8 dB crest factor
+        # Moderately compressed: 6-12 dB crest factor
+        # Heavily compressed: 3-6 dB crest factor
 
         if crest_factor_db > 15:
             return 1.0  # No compression
-        elif crest_factor_db > 10:
-            return 2.0
+        elif crest_factor_db > 12:
+            return 1.5  # Minimal
+        elif crest_factor_db > 9:
+            return 2.0  # Light
         elif crest_factor_db > 7:
-            return 4.0
-        elif crest_factor_db > 5:
-            return 6.0
+            return 3.0  # Moderate
         else:
-            return 8.0  # Heavy compression
+            return 4.0  # Heavy (CAPPED at 4:1 for live use)
 
     def analyze_all(self, num_bands: int = 4):
         """
