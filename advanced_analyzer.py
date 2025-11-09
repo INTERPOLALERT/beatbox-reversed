@@ -156,26 +156,48 @@ class AdvancedAudioAnalyzer:
         formants_over_time = []
 
         for frame in frames.T:
-            # Calculate LPC coefficients
-            lpc_coeffs = librosa.lpc(frame, order=lpc_order)
+            # Skip silent or near-silent frames
+            frame_energy = np.sum(frame ** 2)
+            if frame_energy < 1e-10:
+                continue
 
-            # Find roots of LPC polynomial
-            roots = np.roots(lpc_coeffs)
+            # Check for NaN or inf in frame
+            if not np.all(np.isfinite(frame)):
+                continue
 
-            # Keep roots inside unit circle (stable poles)
-            roots = roots[np.abs(roots) < 1.0]
+            try:
+                # Calculate LPC coefficients
+                lpc_coeffs = librosa.lpc(frame, order=lpc_order)
 
-            # Convert to frequencies
-            angles = np.angle(roots)
-            freqs = angles * (self.sr / (2 * np.pi))
+                # Validate LPC coefficients
+                if not np.all(np.isfinite(lpc_coeffs)):
+                    continue
 
-            # Keep positive frequencies
-            freqs = freqs[freqs > 0]
+                # Find roots of LPC polynomial
+                roots = np.roots(lpc_coeffs)
 
-            # Sort by frequency
-            freqs = np.sort(freqs)
+                # Validate roots
+                if not np.all(np.isfinite(roots)):
+                    continue
 
-            formants_over_time.append(freqs[:5] if len(freqs) >= 5 else freqs)
+                # Keep roots inside unit circle (stable poles)
+                roots = roots[np.abs(roots) < 1.0]
+
+                # Convert to frequencies
+                angles = np.angle(roots)
+                freqs = angles * (self.sr / (2 * np.pi))
+
+                # Keep positive frequencies
+                freqs = freqs[freqs > 0]
+
+                # Validate frequencies
+                if len(freqs) > 0 and np.all(np.isfinite(freqs)):
+                    # Sort by frequency
+                    freqs = np.sort(freqs)
+                    formants_over_time.append(freqs[:5] if len(freqs) >= 5 else freqs)
+            except Exception as e:
+                # Skip problematic frames
+                continue
 
         # Average formants over time
         if len(formants_over_time) > 0:
@@ -191,13 +213,15 @@ class AdvancedAudioAnalyzer:
                     # Average each formant
                     avg_formants = np.mean(filtered_formants, axis=0)
 
-                    self.formants = {
-                        'frequencies': avg_formants.tolist(),
-                        'num_formants': len(avg_formants)
-                    }
+                    # Validate averaged formants
+                    if np.all(np.isfinite(avg_formants)):
+                        self.formants = {
+                            'frequencies': avg_formants.tolist(),
+                            'num_formants': len(avg_formants)
+                        }
 
-                    print(f"Extracted {len(avg_formants)} formants")
-                    return
+                        print(f"Extracted {len(avg_formants)} formants")
+                        return
 
         # Fallback: use spectral peaks
         print("LPC formant extraction failed, using spectral peaks...")
@@ -208,6 +232,15 @@ class AdvancedAudioAnalyzer:
         # Compute average spectrum
         stft = librosa.stft(self.audio, n_fft=4096)
         mag_spectrum = np.mean(np.abs(stft), axis=1)
+
+        # Validate spectrum
+        if not np.all(np.isfinite(mag_spectrum)) or np.max(mag_spectrum) < 1e-10:
+            # Return default formants if spectrum is invalid
+            return {
+                'frequencies': [800.0, 1200.0, 2500.0],
+                'num_formants': 3,
+                'method': 'default'
+            }
 
         # Find peaks
         peaks, properties = signal.find_peaks(
@@ -222,6 +255,10 @@ class AdvancedAudioAnalyzer:
 
         # Keep first 5 peaks (formant-like)
         peak_freqs = peak_freqs[:5]
+
+        # If no peaks found, return default formants
+        if len(peak_freqs) == 0:
+            peak_freqs = np.array([800.0, 1200.0, 2500.0])
 
         return {
             'frequencies': peak_freqs.tolist(),
@@ -287,26 +324,64 @@ class AdvancedAudioAnalyzer:
 
     def _analyze_sound_segment(self, audio: np.ndarray) -> Dict:
         """Analyze a specific audio segment"""
+        # Validate input audio
+        if len(audio) == 0 or not np.all(np.isfinite(audio)):
+            # Return default values for invalid audio
+            return {
+                'spectral_centroid': 1000.0,
+                'rms_db': -60.0,
+                'peak_db': -60.0,
+                'crest_factor_db': 12.0,
+                'estimated_compression_ratio': 1.0
+            }
+
         # Spectral analysis
         stft = librosa.stft(audio, n_fft=2048)
         mag_spectrum = np.mean(np.abs(stft), axis=1)
-        mag_spectrum_db = librosa.amplitude_to_db(mag_spectrum, ref=np.max)
+
+        # Validate magnitude spectrum
+        if not np.all(np.isfinite(mag_spectrum)):
+            mag_spectrum = np.nan_to_num(mag_spectrum, nan=0.0, posinf=0.0, neginf=0.0)
+
+        # Ensure we don't have zeros for amplitude_to_db
+        mag_spectrum = np.maximum(mag_spectrum, 1e-10)
+        mag_spectrum_db = librosa.amplitude_to_db(mag_spectrum, ref=np.max(mag_spectrum))
 
         freqs = librosa.fft_frequencies(sr=self.sr, n_fft=2048)
 
-        # Find spectral centroid
-        spec_centroid = np.sum(freqs * mag_spectrum) / (np.sum(mag_spectrum) + 1e-10)
+        # Find spectral centroid with validation
+        spectrum_sum = np.sum(mag_spectrum)
+        if spectrum_sum > 1e-10:
+            spec_centroid = np.sum(freqs * mag_spectrum) / spectrum_sum
+        else:
+            spec_centroid = 1000.0  # Default centroid
+
+        # Ensure centroid is finite
+        if not np.isfinite(spec_centroid):
+            spec_centroid = 1000.0
 
         # RMS energy
         rms = np.sqrt(np.mean(audio ** 2))
-        rms_db = 20 * np.log10(rms + 1e-10)
+        rms = max(rms, 1e-10)  # Prevent log of zero
+        rms_db = 20 * np.log10(rms)
 
         # Peak level
         peak = np.max(np.abs(audio))
-        peak_db = 20 * np.log10(peak + 1e-10)
+        peak = max(peak, 1e-10)  # Prevent log of zero
+        peak_db = 20 * np.log10(peak)
 
         # Compression estimate (crest factor)
         crest_factor_db = peak_db - rms_db
+
+        # Validate all values are finite
+        if not np.isfinite(spec_centroid):
+            spec_centroid = 1000.0
+        if not np.isfinite(rms_db):
+            rms_db = -60.0
+        if not np.isfinite(peak_db):
+            peak_db = -60.0
+        if not np.isfinite(crest_factor_db):
+            crest_factor_db = 12.0
 
         return {
             'spectral_centroid': float(spec_centroid),
