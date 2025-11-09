@@ -10,7 +10,6 @@ import sys
 import numpy as np
 
 from advanced_analyzer import AdvancedAudioAnalyzer
-from advanced_processor import AdvancedLiveProcessor
 from ultimate_processor import UltimateProcessor
 from audio_playback import AudioPlayer
 from visualizations import RealTimeVisualizer, EQCurveVisualizer, MultibandVisualizer, SpectrogramVisualizer
@@ -707,7 +706,12 @@ class AdvancedBeatboxApp:
         self.output_device_combo = ttk.Combobox(output_frame, width=40, state='readonly')
         self.output_device_combo.pack(side='left', padx=5, fill='x', expand=True)
 
-        ttk.Button(device_frame, text="🔄 Refresh Devices", command=self.refresh_devices).pack(padx=10, pady=10)
+        # Device control buttons
+        device_btn_frame = ttk.Frame(device_frame)
+        device_btn_frame.pack(fill='x', padx=10, pady=10)
+
+        ttk.Button(device_btn_frame, text="🔄 Refresh Devices", command=self.refresh_devices).pack(side='left', padx=5)
+        ttk.Button(device_btn_frame, text="✅ Confirm Device Settings", command=self.confirm_device_settings).pack(side='left', padx=5)
 
         self.refresh_devices()
 
@@ -884,6 +888,71 @@ Target Latency: <10ms (with proper configuration)
             self.input_device_combo.current(0)
         if output_devices:
             self.output_device_combo.current(0)
+
+    def confirm_device_settings(self):
+        """Display detailed device settings for confirmation"""
+        import sounddevice as sd
+
+        # Get selected devices
+        input_selection = self.input_device_combo.get()
+        output_selection = self.output_device_combo.get()
+
+        if not input_selection or not output_selection:
+            messagebox.showwarning("Warning", "Please select both input and output devices first")
+            return
+
+        # Parse device indices
+        input_idx = int(input_selection.split(':')[0])
+        output_idx = int(output_selection.split(':')[0])
+
+        # Get device info
+        devices = sd.query_devices()
+        input_device = devices[input_idx]
+        output_device = devices[output_idx]
+
+        # Build detailed info message
+        info_msg = f"""
+Audio Device Configuration:
+
+INPUT DEVICE (Microphone):
+  Name: {input_device['name']}
+  Index: {input_idx}
+  Channels: {input_device['max_input_channels']}
+  Sample Rate: {input_device['default_samplerate']} Hz
+  Host API: {sd.query_hostapis(input_device['hostapi'])['name']}
+
+OUTPUT DEVICE (Speakers/Headphones):
+  Name: {output_device['name']}
+  Index: {output_idx}
+  Channels: {output_device['max_output_channels']}
+  Sample Rate: {output_device['default_samplerate']} Hz
+  Host API: {sd.query_hostapis(output_device['hostapi'])['name']}
+
+PROCESSING SETTINGS:
+  Target Sample Rate: {config.SAMPLE_RATE} Hz
+  Buffer Size: {self.buffer_size_var.get()} samples
+  Estimated Latency: ~{self.buffer_size_var.get() / config.SAMPLE_RATE * 1000:.1f} ms
+
+Are these settings correct?
+        """
+
+        # Show confirmation dialog with detailed info
+        result = messagebox.askyesno(
+            "Confirm Audio Device Settings",
+            info_msg,
+            icon='question'
+        )
+
+        if result:
+            self.log("Audio device settings confirmed")
+            self.status_bar.config(text="Device settings confirmed - Ready to process")
+            messagebox.showinfo(
+                "Settings Confirmed",
+                "Audio device settings have been confirmed.\nYou can now start processing."
+            )
+        else:
+            self.log("Device settings not confirmed - please adjust")
+            self.status_bar.config(text="Please adjust device settings")
 
     def start_processing(self):
         """Start processing"""
