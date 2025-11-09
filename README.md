@@ -1,6 +1,20 @@
-# 🎤 Beatbox Audio Style Transfer
+# 🎤 Beatbox Audio Style Transfer - Professional Edition
 
 **Reverse engineer any beatbox audio and apply those exact characteristics to your live mic in real-time!**
+
+## 🆕 NOW WITH PROFESSIONAL-GRADE FEATURES!
+
+**Version 2.0** adds:
+- ✨ **Multiband processing** (4 or 8 bands with Linkwitz-Riley crossovers)
+- ✨ **Adaptive transient preservation** (preserves your attack while adding character)
+- ✨ **Sound classification** (kick/snare/hihat/bass detection)
+- ✨ **Real-time controls** (wet/dry, transient blend, per-band mixing)
+- ✨ **Professional visualizations** (spectrum analyzer, EQ curves)
+- ✨ **Advanced analysis** (formant extraction, per-sound-type presets)
+
+👉 **New users:** Check [`QUICKSTART.md`](QUICKSTART.md) for 5-minute setup
+👉 **v2.0 features:** See [`PROFESSIONAL_UPGRADE.md`](PROFESSIONAL_UPGRADE.md) for complete details
+👉 **Technical info:** Continue reading below
 
 ## 🌟 What Does This App Do?
 
