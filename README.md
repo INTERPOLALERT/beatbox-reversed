@@ -86,21 +86,43 @@ Built on cutting-edge research combining traditional DSP with modern audio analy
 
 ## 🚀 Installation
 
-### 1. Clone the Repository
+### Quick Start (Windows)
+
+**Easiest method** - Just double-click these batch files:
+
+1. **First time setup**: Double-click `install_dependencies.bat`
+   - Automatically installs Python dependencies
+   - Creates necessary directories
+   - One-time setup
+
+2. **Every time you use the app**: Double-click `start_bbx.bat`
+   - Launches the advanced GUI
+   - Handles all paths automatically
+   - No command line needed!
+
+### Manual Installation (All Platforms)
+
+#### 1. Clone the Repository
 
 ```bash
 git clone <repository-url>
 cd beatbox-reversed
 ```
 
-### 2. Install Dependencies
+#### 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run the Application
+#### 3. Run the Application
 
+**Advanced GUI (recommended)**:
+```bash
+python advanced_gui.py
+```
+
+**Basic GUI**:
 ```bash
 python gui.py
 ```
