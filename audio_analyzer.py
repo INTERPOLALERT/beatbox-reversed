@@ -87,12 +87,15 @@ class AudioAnalyzer:
         """
         Extract EQ parameters at standard frequency bands
 
+        CRITICAL FIX: Implements normalization + scaling + clamping to prevent
+        mastered audio's absolute levels from producing extreme EQ values.
+
         Args:
             freqs: Array of frequency values
             magnitude_db: Magnitude spectrum in dB
 
         Returns:
-            List of EQ band parameters
+            List of EQ band parameters (gains clamped to ±6 dB)
         """
         eq_bands = []
 
@@ -107,13 +110,23 @@ class AudioAnalyzer:
 
             avg_gain = np.mean(magnitude_db[start_idx:end_idx])
 
-            # Normalize to make it relative to overall spectrum
+            # STEP 1: Normalize to make it relative to overall spectrum
+            # This removes absolute loudness scaling from mastered audio
             overall_avg = np.mean(magnitude_db)
             relative_gain = avg_gain - overall_avg
 
+            # STEP 2: Apply scaling factor to keep perceptual changes reasonable
+            # Research shows 0.15-0.25 works well for live emulation
+            SCALING_FACTOR = 0.20
+            scaled_gain = relative_gain * SCALING_FACTOR
+
+            # STEP 3: Safety clamp to ±6 dB (critical for live mic stability)
+            # Prevents extreme boosts/cuts that destabilize unprocessed input
+            clamped_gain = np.clip(scaled_gain, -6.0, 6.0)
+
             eq_bands.append({
                 'frequency': center_freq,
-                'gain_db': float(relative_gain),
+                'gain_db': float(clamped_gain),
                 'q_factor': 1.0  # Default Q factor
             })
 
@@ -160,35 +173,49 @@ class AudioAnalyzer:
         """
         Estimate compressor settings from RMS envelope
 
+        CRITICAL FIX: Uses crest factor instead of peak-range ratio to avoid
+        interpreting mastering artifacts as extreme compression needs.
+
         Args:
             rms_db: RMS values in dB
 
         Returns:
-            Dictionary of compression parameters
+            Dictionary of compression parameters (ratio capped at 4:1)
         """
-        # Analyze the distribution of levels
-        rms_sorted = np.sort(rms_db)
+        # Calculate peak level
+        peak_audio = np.max(np.abs(self.audio))
+        peak_db = 20 * np.log10(peak_audio + 1e-10)
 
-        # Peak level (max)
-        peak_db = rms_sorted[-1]
+        # Calculate average RMS (in linear domain for accuracy)
+        rms_linear = np.sqrt(np.mean(self.audio ** 2))
+        rms_avg_db = 20 * np.log10(rms_linear + 1e-10)
 
-        # Estimate threshold as 75th percentile
-        threshold_db = np.percentile(rms_db, 75)
+        # CREST FACTOR: difference between peak and RMS
+        # Uncompressed: 12-20 dB | Moderately compressed: 6-12 dB | Heavily: 3-6 dB
+        crest_factor_db = peak_db - rms_avg_db
 
-        # Estimate ratio from how compressed the peaks are
-        # Higher values = more compressed
-        peak_range = peak_db - threshold_db
-        total_range = self.dynamic_range['range_db']
-
-        # If peaks are squashed relative to total range, higher compression
-        if total_range > 0:
-            compression_factor = 1.0 - (peak_range / total_range)
-            ratio = 1.0 + (compression_factor * 7.0)  # Scale to 1:1 to 8:1
+        # Map crest factor to compression ratio using realistic live ranges
+        # CRITICAL: Cap at 4:1 for live mic stability (not 8:1+)
+        if crest_factor_db > 15:
+            ratio = 1.5  # Minimal compression
+        elif crest_factor_db > 12:
+            ratio = 2.0  # Light compression
+        elif crest_factor_db > 9:
+            ratio = 2.5  # Moderate compression
+        elif crest_factor_db > 7:
+            ratio = 3.0  # Noticeable compression
         else:
-            ratio = 1.0
+            ratio = 4.0  # Heavy compression (CAPPED - was 8:1)
 
-        # Clamp ratio
-        ratio = np.clip(ratio, 1.0, 10.0)
+        # Estimate threshold (use median level as reference)
+        median_rms_db = np.median(rms_db)
+        threshold_db = median_rms_db + 3.0  # Slightly above median
+
+        # Calculate makeup gain to compensate for compression
+        # But clamp to ±6 dB for safety
+        estimated_gain_reduction = (ratio - 1.0) * 2.0  # Rough estimate
+        makeup_gain = estimated_gain_reduction / 2.0  # Partial compensation
+        makeup_gain = np.clip(makeup_gain, 0.0, 6.0)  # Safety limit
 
         return {
             'threshold_db': float(threshold_db),
@@ -196,7 +223,8 @@ class AudioAnalyzer:
             'attack_ms': config.ATTACK_TIME_MS,
             'release_ms': config.RELEASE_TIME_MS,
             'knee_db': 3.0,  # Soft knee
-            'makeup_gain_db': 0.0
+            'makeup_gain_db': float(makeup_gain),
+            'crest_factor_db': float(crest_factor_db)  # Include for diagnostics
         }
 
     def analyze_transients(self):
