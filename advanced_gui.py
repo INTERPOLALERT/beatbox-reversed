@@ -11,6 +11,7 @@ import numpy as np
 
 from advanced_analyzer import AdvancedAudioAnalyzer
 from advanced_processor import AdvancedLiveProcessor
+from audio_playback import AudioPlayer
 from visualizations import RealTimeVisualizer, EQCurveVisualizer, MultibandVisualizer, SpectrogramVisualizer
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -31,6 +32,8 @@ class AdvancedBeatboxApp:
         self.processor = AdvancedLiveProcessor()
         self.current_preset = None
         self.is_processing = False
+        self.audio_player = AudioPlayer()
+        self.last_recording_path = None
 
         # Visualization
         self.visualizer = None
@@ -247,6 +250,28 @@ class AdvancedBeatboxApp:
             width=20
         )
         self.stop_rec_btn.pack(side='left', padx=5)
+
+        # Playback controls
+        playback_btn_frame = ttk.Frame(rec_frame)
+        playback_btn_frame.pack(fill='x', padx=10, pady=5)
+
+        self.play_rec_btn = ttk.Button(
+            playback_btn_frame,
+            text="▶️ Play Recording",
+            command=self.play_recording,
+            state='disabled',
+            width=20
+        )
+        self.play_rec_btn.pack(side='left', padx=5)
+
+        self.stop_play_btn = ttk.Button(
+            playback_btn_frame,
+            text="⏹️ Stop Playback",
+            command=self.stop_playback,
+            state='disabled',
+            width=20
+        )
+        self.stop_play_btn.pack(side='left', padx=5)
 
         # Log
         log_frame = ttk.LabelFrame(self.processing_tab, text="Processing Log")
@@ -690,9 +715,69 @@ Target Latency: <10ms (with proper configuration)
         self.recording_status_label.config(text="⚫ Recording: Off")
         self.start_rec_btn.config(state='normal')
         self.stop_rec_btn.config(state='disabled')
+        self.play_rec_btn.config(state='normal')
+
+        # Store path for playback
+        self.last_recording_path = output_path
 
         self.log(f"Recording saved: {output_path}")
         messagebox.showinfo("Recording Saved", f"Saved to:\n\n{output_path}")
+
+    def play_recording(self):
+        """Play the last recording"""
+        if not self.last_recording_path or not Path(self.last_recording_path).exists():
+            # Browse for file
+            filename = filedialog.askopenfilename(
+                title="Select Audio File to Play",
+                initialdir=config.RECORDINGS_DIR,
+                filetypes=[
+                    ("WAV Files", "*.wav"),
+                    ("All Audio", "*.wav *.mp3 *.flac"),
+                    ("All Files", "*.*")
+                ]
+            )
+            if not filename:
+                return
+            self.last_recording_path = filename
+
+        try:
+            # Get output device
+            output_device = None
+            if self.output_device_combo.get():
+                output_device = int(self.output_device_combo.get().split(':')[0])
+
+            # Play file
+            self.audio_player.play_file(
+                self.last_recording_path,
+                device=output_device,
+                callback=self._playback_finished
+            )
+
+            # Update UI
+            self.play_rec_btn.config(state='disabled')
+            self.stop_play_btn.config(state='normal')
+
+            self.log(f"Playing: {Path(self.last_recording_path).name}")
+
+        except Exception as e:
+            messagebox.showerror("Playback Error", f"Failed to play audio:\n\n{e}")
+
+    def stop_playback(self):
+        """Stop audio playback"""
+        self.audio_player.stop()
+
+        # Update UI
+        self.play_rec_btn.config(state='normal')
+        self.stop_play_btn.config(state='disabled')
+
+        self.log("Playback stopped")
+
+    def _playback_finished(self):
+        """Called when playback finishes"""
+        # Update UI on main thread
+        self.root.after(0, lambda: self.play_rec_btn.config(state='normal'))
+        self.root.after(0, lambda: self.stop_play_btn.config(state='disabled'))
+        self.root.after(0, lambda: self.log("Playback finished"))
 
     # Control callbacks
 
