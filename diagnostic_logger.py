@@ -4,7 +4,7 @@ Per-buffer real-time diagnostics and logging system
 Tracks applied EQ, compression, transient shaping, and frequency content
 """
 import numpy as np
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from pathlib import Path
 import json
