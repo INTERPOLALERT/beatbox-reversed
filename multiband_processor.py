@@ -310,6 +310,137 @@ class TransientDetector:
         self.slow_state = 0.0
 
 
+class MultibandProcessor:
+    """
+    Complete multiband processor with crossover, per-band processing, and recombination
+    """
+
+    def __init__(self, num_bands: int = 4, sample_rate: int = 44100):
+        """
+        Initialize multiband processor
+
+        Args:
+            num_bands: Number of frequency bands
+            sample_rate: Sample rate in Hz
+        """
+        self.num_bands = num_bands
+        self.sample_rate = sample_rate
+
+        # Create crossover
+        self.crossover = create_default_crossover(num_bands, sample_rate)
+
+        # Per-band gains and parameters
+        self.band_gains = np.ones(num_bands)
+        self.band_enabled = [True] * num_bands
+
+        # Per-band compression parameters
+        self.band_compression_ratios = [2.0] * num_bands
+        self.band_compression_thresholds = [-12.0] * num_bands
+
+        # Simple envelope followers for compression
+        self.band_envelope_states = [0.0] * num_bands
+
+    def set_band_gain(self, band_idx: int, gain_db: float):
+        """Set gain for specific band"""
+        if 0 <= band_idx < self.num_bands:
+            self.band_gains[band_idx] = 10 ** (gain_db / 20)
+
+    def set_band_compression(self, band_idx: int, ratio: float, threshold_db: float):
+        """Set compression parameters for specific band"""
+        if 0 <= band_idx < self.num_bands:
+            self.band_compression_ratios[band_idx] = ratio
+            self.band_compression_thresholds[band_idx] = threshold_db
+
+    def apply_band_compression(self, audio: np.ndarray, band_idx: int) -> np.ndarray:
+        """
+        Apply simple compression to a band
+
+        Args:
+            audio: Band audio
+            band_idx: Band index
+
+        Returns:
+            Compressed audio
+        """
+        ratio = self.band_compression_ratios[band_idx]
+        threshold_db = self.band_compression_thresholds[band_idx]
+        threshold_linear = 10 ** (threshold_db / 20)
+
+        # Simple RMS-based compression
+        rms = np.sqrt(np.mean(audio ** 2))
+
+        if rms > threshold_linear:
+            # Calculate gain reduction
+            excess_db = 20 * np.log10(rms / threshold_linear)
+            reduction_db = excess_db * (1 - 1/ratio)
+            gain = 10 ** (-reduction_db / 20)
+
+            return audio * gain
+        else:
+            return audio
+
+    def process(self, audio: np.ndarray) -> np.ndarray:
+        """
+        Process audio through multiband pipeline
+
+        Args:
+            audio: Input audio
+
+        Returns:
+            Processed audio with multiband processing applied
+        """
+        # Split into bands
+        bands = self.crossover.split_bands(audio)
+
+        # Process each band
+        processed_bands = []
+        for i, band in enumerate(bands):
+            if self.band_enabled[i]:
+                # Apply compression
+                band = self.apply_band_compression(band, i)
+
+                # Apply gain
+                band = band * self.band_gains[i]
+
+            processed_bands.append(band)
+
+        # Recombine
+        output = self.crossover.combine_bands(processed_bands)
+
+        return output
+
+    def load_multiband_analysis(self, multiband_data: dict):
+        """
+        Load multiband analysis data from preset
+
+        Args:
+            multiband_data: Dictionary with per-band analysis
+        """
+        for band_idx, band_data in multiband_data.items():
+            # Parse band index
+            try:
+                idx = int(band_idx.replace('band_', ''))
+            except:
+                continue
+
+            if idx >= self.num_bands:
+                continue
+
+            # Apply band-specific parameters
+            if 'gain_db' in band_data:
+                self.set_band_gain(idx, band_data['gain_db'])
+
+            if 'compression_ratio' in band_data:
+                ratio = band_data['compression_ratio']
+                threshold = band_data.get('compression_threshold_db', -12.0)
+                self.set_band_compression(idx, ratio, threshold)
+
+    def reset_state(self):
+        """Reset processing state"""
+        self.crossover.reset_state()
+        self.band_envelope_states = [0.0] * self.num_bands
+
+
 def create_default_crossover(num_bands: int = 4, sample_rate: int = 44100) -> MultibandCrossover:
     """
     Create a default crossover configuration
