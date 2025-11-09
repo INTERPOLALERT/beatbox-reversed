@@ -1,4 +1,4 @@
-# Beatbox Audio Style Transfer Application
+# Beatbox Audio Style Transfer Application - Professional Grade
 # Core Dependencies
 
 # Audio Analysis
@@ -11,9 +11,18 @@ pedalboard>=0.9.0
 sounddevice>=0.4.6
 soundfile>=0.12.0
 
-# GUI
-tkinter-tooltip>=2.1.0
+# Machine Learning
+scikit-learn>=1.3.0
+joblib>=1.3.0
+
+# Visualization
+matplotlib>=3.7.0
+pillow>=10.0.0
 
 # Utilities
-matplotlib>=3.7.0
 pydub>=0.25.1
+tqdm>=4.65.0
+
+# Optional: For advanced ML (Phase 2)
+# tensorflow>=2.13.0  # Uncomment for neural network classifier
+# torch>=2.0.0        # Alternative to TensorFlow
