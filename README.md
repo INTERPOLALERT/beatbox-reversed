@@ -2,9 +2,17 @@
 
 **Reverse engineer any beatbox audio and apply those exact characteristics to your live mic in real-time!**
 
-## 🆕 NOW WITH PROFESSIONAL-GRADE FEATURES!
+## 🆕 NOW WITH ULTIMATE EDITION FEATURES!
 
-**Version 2.0** adds:
+**Version 3.0 - Ultimate Edition** adds ALL the missing pieces:
+- 🔥 **Adaptive per-sound-type processing** (kick/snare/hihat/bass/vocal - each gets optimized EQ!)
+- 🔥 **Micro-transient preservation** (dual-envelope system preserves attack nuances)
+- 🔥 **Stereo/spatial effects** (reverb, stereo width, panning for depth and space)
+- 🔥 **Harmonic distortion & saturation** (tube/tape warmth, analog character)
+- 🔥 **Audio playback controls** (play back your recordings instantly)
+- 🔥 **Ultimate integrated processor** (all features in one powerful chain)
+
+**Version 2.0** features still included:
 - ✨ **Multiband processing** (4 or 8 bands with Linkwitz-Riley crossovers)
 - ✨ **Adaptive transient preservation** (preserves your attack while adding character)
 - ✨ **Sound classification** (kick/snare/hihat/bass detection)
@@ -13,7 +21,8 @@
 - ✨ **Advanced analysis** (formant extraction, per-sound-type presets)
 
 👉 **New users:** Check [`QUICKSTART.md`](QUICKSTART.md) for 5-minute setup
-👉 **v2.0 features:** See [`PROFESSIONAL_UPGRADE.md`](PROFESSIONAL_UPGRADE.md) for complete details
+👉 **v3.0 Ultimate features:** See [`NEW_FEATURES.md`](NEW_FEATURES.md) for complete documentation
+👉 **v2.0 features:** See [`PROFESSIONAL_UPGRADE.md`](PROFESSIONAL_UPGRADE.md) for professional upgrade details
 👉 **Technical info:** Continue reading below
 
 ## 🌟 What Does This App Do?
