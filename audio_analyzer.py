@@ -58,8 +58,12 @@ class AudioAnalyzer:
         # Average over time
         avg_spectrum = np.mean(mag_spectrum, axis=1)
 
+        # Ensure we don't have zeros or NaN
+        avg_spectrum = np.nan_to_num(avg_spectrum, nan=1e-10, posinf=1e-10, neginf=1e-10)
+        avg_spectrum = np.maximum(avg_spectrum, 1e-10)
+
         # Convert to dB
-        avg_spectrum_db = librosa.amplitude_to_db(avg_spectrum, ref=np.max)
+        avg_spectrum_db = librosa.amplitude_to_db(avg_spectrum, ref=np.max(avg_spectrum))
 
         # Get frequency bins
         freqs = librosa.fft_frequencies(sr=self.sr, n_fft=4096)
@@ -109,11 +113,16 @@ class AudioAnalyzer:
 
         self.eq_curve = eq_curve
 
-        # Store spectral profile
+        # Store spectral profile with validation
+        centroid = np.mean(librosa.feature.spectral_centroid(y=self.audio, sr=self.sr))
+        rolloff = np.mean(librosa.feature.spectral_rolloff(y=self.audio, sr=self.sr))
+        bandwidth = np.mean(librosa.feature.spectral_bandwidth(y=self.audio, sr=self.sr))
+
+        # Validate spectral features
         self.spectral_profile = {
-            'centroid': float(np.mean(librosa.feature.spectral_centroid(y=self.audio, sr=self.sr))),
-            'rolloff': float(np.mean(librosa.feature.spectral_rolloff(y=self.audio, sr=self.sr))),
-            'bandwidth': float(np.mean(librosa.feature.spectral_bandwidth(y=self.audio, sr=self.sr))),
+            'centroid': float(centroid) if np.isfinite(centroid) else 1000.0,
+            'rolloff': float(rolloff) if np.isfinite(rolloff) else 2000.0,
+            'bandwidth': float(bandwidth) if np.isfinite(bandwidth) else 1000.0,
         }
 
         print(f"Analyzed {len(eq_curve)} EQ bands")
@@ -134,7 +143,11 @@ class AudioAnalyzer:
             hop_length=hop_length
         )[0]
 
-        rms_db = librosa.amplitude_to_db(rms, ref=np.max)
+        # Ensure RMS doesn't have zeros or NaN
+        rms = np.nan_to_num(rms, nan=1e-10, posinf=1e-10, neginf=1e-10)
+        rms = np.maximum(rms, 1e-10)
+
+        rms_db = librosa.amplitude_to_db(rms, ref=np.max(rms))
 
         # Calculate dynamic range
         peak_db = 20 * np.log10(np.max(np.abs(self.audio)) + 1e-10)
