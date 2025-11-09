@@ -9,10 +9,12 @@ from pathlib import Path
 APP_DIR = Path(__file__).parent
 PRESETS_DIR = APP_DIR / "presets"
 RECORDINGS_DIR = APP_DIR / "recordings"
+LOGS_DIR = APP_DIR / "logs"
 
 # Create directories if they don't exist
 PRESETS_DIR.mkdir(exist_ok=True)
 RECORDINGS_DIR.mkdir(exist_ok=True)
+LOGS_DIR.mkdir(exist_ok=True)
 
 # Audio Settings
 SAMPLE_RATE = 44100  # Hz
@@ -48,6 +50,18 @@ RECORDING_SAMPLE_WIDTH = 2  # 16-bit
 
 # Latency Settings
 TARGET_LATENCY_MS = 10  # Target latency goal
+
+# Diagnostic Settings
+DIAGNOSTIC_MODE_ENABLED = False  # Enable per-buffer diagnostics and logging
+DIAGNOSTIC_PRINT_INTERVAL = 100  # Print stats every N buffers
+DIAGNOSTIC_LOG_TO_FILE = True  # Save diagnostic logs to file
+DIAGNOSTIC_LOG_TO_CSV = True  # Save CSV for time-series analysis
+
+# Adaptive Loudness Matching Settings
+LOUDNESS_MATCHING_ENABLED = True  # Enable adaptive loudness matching
+LOUDNESS_MATCH_MODE = 'rms'  # Options: 'rms', 'lufs', 'peak_normalized', 'crest_matched'
+LOUDNESS_GAIN_SMOOTHING = True  # Smooth gain changes to avoid clicks
+LOUDNESS_TARGET_LUFS = -14.0  # Target LUFS (broadcast standard)
 
 # Config File
 CONFIG_FILE = APP_DIR / "audio_config.json"
