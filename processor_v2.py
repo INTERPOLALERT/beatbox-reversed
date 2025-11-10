@@ -18,12 +18,13 @@ class BeatboxProcessorV2:
     Real-time processor that applies V2 analysis results to live audio
     """
 
-    def __init__(self, sample_rate: int = 44100):
+    def __init__(self, sample_rate: int = 44100, enable_auto_gain: bool = False):
         """
         Initialize processor
 
         Args:
             sample_rate: Sample rate in Hz
+            enable_auto_gain: Enable automatic gain normalization
         """
         self.sample_rate = sample_rate
 
@@ -38,6 +39,13 @@ class BeatboxProcessorV2:
         self.wet_dry_mix = 1.0  # 0=dry, 1=fully processed
         self.input_gain_db = 0.0
         self.output_gain_db = 0.0
+
+        # Adaptive processing
+        self.enable_auto_gain = enable_auto_gain
+        self.gain_normalizer = None
+        if enable_auto_gain:
+            from gain_normalizer import GainNormalizer
+            self.gain_normalizer = GainNormalizer(sample_rate)
 
     def load_preset(self, preset_path: str):
         """
@@ -70,9 +78,18 @@ class BeatboxProcessorV2:
         print("\nBuilding processing chain...")
 
         # 1. INPUT GAIN
-        if self.input_gain_db != 0:
-            chain.append(Gain(gain_db=self.input_gain_db))
-            print(f"  [1] Input Gain: {self.input_gain_db:+.1f} dB")
+        # Check for adaptive preset gain offset
+        total_input_gain = self.input_gain_db
+
+        if 'metadata' in self.preset_data:
+            adaptive_gain = self.preset_data['metadata'].get('input_gain_offset_db', 0.0)
+            if adaptive_gain != 0:
+                total_input_gain += adaptive_gain
+                print(f"  [1a] Adaptive Input Gain: {adaptive_gain:+.1f} dB (from mic calibration)")
+
+        if total_input_gain != 0:
+            chain.append(Gain(gain_db=total_input_gain))
+            print(f"  [1b] Total Input Gain: {total_input_gain:+.1f} dB")
 
         # 2. EQ (from spectral analysis)
         eq_filters = self._build_eq_chain()
@@ -241,6 +258,10 @@ class BeatboxProcessorV2:
 
         if self.pedalboard is None:
             return audio
+
+        # Apply auto gain normalization if enabled
+        if self.enable_auto_gain and self.gain_normalizer is not None:
+            audio, _ = self.gain_normalizer.normalize_realtime(audio, method='rms')
 
         # Process with pedalboard
         processed = self.pedalboard(audio, sample_rate=self.sample_rate)

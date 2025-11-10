@@ -168,7 +168,8 @@ class DynamicsAnalyzerV2:
 
     def _estimate_attack_time(self, audio: np.ndarray, rms: np.ndarray) -> float:
         """
-        Estimate attack time from transient response
+        Estimate attack time from transient response using envelope correlation
+        Enhanced method: matches compression response to actual envelope
         """
         # Detect onsets
         onset_frames = librosa.onset.onset_detect(
@@ -182,8 +183,8 @@ class DynamicsAnalyzerV2:
         if len(onset_frames) < 3:
             return 5.0  # Default
 
-        # Analyze how quickly level changes after onsets
-        attack_times = []
+        # Method 1: Traditional onset-based analysis
+        attack_times_traditional = []
 
         for onset_frame in onset_frames[:20]:  # Analyze first 20 onsets
             if onset_frame + 10 < len(rms):
@@ -197,11 +198,45 @@ class DynamicsAnalyzerV2:
                     if len(rise_frames) > 0:
                         rise_time_frames = rise_frames[0]
                         rise_time_ms = (rise_time_frames * 512 / self.sample_rate) * 1000
-                        attack_times.append(rise_time_ms)
+                        attack_times_traditional.append(rise_time_ms)
 
-        if len(attack_times) > 0:
-            avg_attack = np.median(attack_times)
-            # Fast attack is typical for compressed material
+        # Method 2: Envelope correlation method
+        # Try different attack times and see which matches best
+        attack_times_correlation = []
+
+        for onset_frame in onset_frames[:10]:
+            if onset_frame + 30 < len(rms):
+                # Get the actual envelope segment
+                actual_envelope = rms[onset_frame:onset_frame+30]
+
+                # Try different attack times
+                best_correlation = -1
+                best_attack = 5.0
+
+                for test_attack_ms in np.linspace(0.5, 30.0, 20):
+                    # Simulate compressor envelope with this attack time
+                    simulated = self._simulate_compressor_envelope(
+                        actual_envelope,
+                        attack_ms=test_attack_ms,
+                        release_ms=100.0
+                    )
+
+                    # Calculate correlation
+                    if len(simulated) == len(actual_envelope):
+                        correlation = np.corrcoef(actual_envelope, simulated)[0, 1]
+                        if correlation > best_correlation:
+                            best_correlation = correlation
+                            best_attack = test_attack_ms
+
+                if best_correlation > 0.5:  # Only use if correlation is reasonable
+                    attack_times_correlation.append(best_attack)
+
+        # Combine both methods
+        all_attack_times = attack_times_traditional + attack_times_correlation
+
+        if len(all_attack_times) > 0:
+            # Use median for robustness
+            avg_attack = np.median(all_attack_times)
             # Clamp to reasonable range
             attack = np.clip(avg_attack, 0.5, 30.0)
         else:
@@ -209,9 +244,48 @@ class DynamicsAnalyzerV2:
 
         return attack
 
+    def _simulate_compressor_envelope(self, input_envelope: np.ndarray,
+                                     attack_ms: float, release_ms: float) -> np.ndarray:
+        """
+        Simulate compressor envelope follower for correlation matching
+
+        Args:
+            input_envelope: Input envelope to compress
+            attack_ms: Attack time in milliseconds
+            release_ms: Release time in milliseconds
+
+        Returns:
+            Simulated compressed envelope
+        """
+        # Convert to samples (assuming hop_length=512)
+        hop_length = 512
+        attack_samples = attack_ms * self.sample_rate / 1000.0 / hop_length
+        release_samples = release_ms * self.sample_rate / 1000.0 / hop_length
+
+        # Calculate time constants
+        attack_coef = np.exp(-1.0 / (attack_samples + 1e-10))
+        release_coef = np.exp(-1.0 / (release_samples + 1e-10))
+
+        # Simulate envelope follower
+        envelope = np.zeros_like(input_envelope)
+        state = input_envelope[0] if len(input_envelope) > 0 else 0.0
+
+        for i, sample in enumerate(input_envelope):
+            if sample > state:
+                # Attack
+                coef = attack_coef
+            else:
+                # Release
+                coef = release_coef
+
+            state = coef * state + (1 - coef) * sample
+            envelope[i] = state
+
+        return envelope
+
     def _estimate_release_time(self, rms_db: np.ndarray) -> float:
         """
-        Estimate release time from envelope decay
+        Estimate release time from envelope decay using enhanced correlation method
         """
         # Find decay slopes in the envelope
         # Calculate first derivative
@@ -223,7 +297,7 @@ class DynamicsAnalyzerV2:
         if np.sum(decay_regions) < 10:
             return 100.0  # Default
 
-        # Analyze decay rates
+        # Method 1: Traditional decay rate analysis
         decay_rates = []
 
         # Find continuous decay regions
@@ -246,20 +320,97 @@ class DynamicsAnalyzerV2:
                         decay_rates.append(decay_rate)
             i += 1
 
+        # Method 2: Envelope correlation method for release
+        release_times_correlation = []
+
+        # Find peaks followed by decay
+        peaks = signal.find_peaks(rms_db, distance=10, prominence=2)[0]
+
+        for peak_idx in peaks[:10]:
+            if peak_idx + 40 < len(rms_db):
+                # Get decay segment after peak
+                decay_segment = rms_db[peak_idx:peak_idx+40]
+
+                # Try different release times
+                best_correlation = -1
+                best_release = 100.0
+
+                for test_release_ms in np.linspace(30.0, 300.0, 20):
+                    # Create ideal exponential decay with this release time
+                    ideal_decay = self._create_exponential_decay(
+                        len(decay_segment),
+                        release_ms=test_release_ms,
+                        hop_length=512
+                    )
+
+                    # Normalize both to 0-1 for comparison
+                    decay_norm = (decay_segment - np.min(decay_segment)) / (np.max(decay_segment) - np.min(decay_segment) + 1e-10)
+                    ideal_norm = (ideal_decay - np.min(ideal_decay)) / (np.max(ideal_decay) - np.min(ideal_decay) + 1e-10)
+
+                    # Calculate correlation
+                    if len(decay_norm) == len(ideal_norm):
+                        correlation = np.corrcoef(decay_norm, ideal_norm)[0, 1]
+                        if correlation > best_correlation:
+                            best_correlation = correlation
+                            best_release = test_release_ms
+
+                if best_correlation > 0.5:
+                    release_times_correlation.append(best_release)
+
+        # Combine both methods
         if len(decay_rates) > 0:
             avg_decay_rate = np.median(decay_rates)
-
-            # Convert decay rate to release time
-            # Faster decay = shorter release
-            # Typical: 6 dB decay corresponds to release time
-            release_ms = (6.0 / (avg_decay_rate + 0.1)) * 1000
-
-            # Clamp to reasonable range
-            release = np.clip(release_ms, 30.0, 300.0)
+            release_from_rate = (6.0 / (avg_decay_rate + 0.1)) * 1000
+            release_from_rate = np.clip(release_from_rate, 30.0, 300.0)
         else:
-            release = 100.0  # Default medium release
+            release_from_rate = None
+
+        if len(release_times_correlation) > 0:
+            release_from_correlation = np.median(release_times_correlation)
+        else:
+            release_from_correlation = None
+
+        # Combine estimates
+        if release_from_rate is not None and release_from_correlation is not None:
+            # Average both methods
+            release = (release_from_rate + release_from_correlation) / 2.0
+        elif release_from_correlation is not None:
+            release = release_from_correlation
+        elif release_from_rate is not None:
+            release = release_from_rate
+        else:
+            release = 100.0  # Default
+
+        # Final clamp
+        release = np.clip(release, 30.0, 300.0)
 
         return release
+
+    def _create_exponential_decay(self, length: int, release_ms: float, hop_length: int) -> np.ndarray:
+        """
+        Create ideal exponential decay curve for correlation matching
+
+        Args:
+            length: Length of decay in frames
+            release_ms: Release time in milliseconds
+            hop_length: Hop length used in analysis
+
+        Returns:
+            Exponential decay curve
+        """
+        # Convert release time to time constant
+        release_samples = release_ms * self.sample_rate / 1000.0 / hop_length
+        decay_coef = np.exp(-1.0 / (release_samples + 1e-10))
+
+        # Generate decay curve
+        decay = np.zeros(length)
+        state = 1.0  # Start at peak
+
+        for i in range(length):
+            decay[i] = state
+            state = decay_coef * state
+
+        return decay
 
     def _estimate_knee_width(self, rms_db: np.ndarray, threshold_db: float) -> float:
         """

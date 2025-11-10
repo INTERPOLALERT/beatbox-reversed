@@ -174,27 +174,67 @@ class EffectsDetector:
 
     def _detect_deessing(self, audio: np.ndarray) -> Dict:
         """
-        Detect de-essing (high-frequency dynamics control)
+        Enhanced de-essing detection with multi-band high-frequency analysis
         """
         # De-esser reduces harsh sibilants (5-10 kHz range)
-        # Detect by analyzing high-frequency dynamics
+        # Enhanced: Analyze multiple HF bands to find optimal de-esser frequency
 
-        # Extract high-frequency content
-        sos_hp = signal.butter(4, 4000, 'hp', fs=self.sample_rate, output='sos')
-        highs = signal.sosfilt(sos_hp, audio)
-
-        # Calculate high-freq RMS over time
         frame_length = 2048
         hop_length = 512
+
+        # Define high-frequency sub-bands for analysis
+        hf_bands = {
+            '4-6 kHz': (4000, 6000),
+            '6-8 kHz': (6000, 8000),
+            '8-10 kHz': (8000, 10000)
+        }
+
+        band_dynamics = {}
+        most_controlled_band = None
+        max_control = 0.0
+
+        # Analyze each HF band
+        for band_name, (low_freq, high_freq) in hf_bands.items():
+            # Extract band
+            sos = signal.butter(4, [low_freq, high_freq], 'bp', fs=self.sample_rate, output='sos')
+            band_signal = signal.sosfilt(sos, audio)
+
+            # Calculate RMS over time
+            band_rms = librosa.feature.rms(y=band_signal, frame_length=frame_length,
+                                          hop_length=hop_length)[0]
+            band_rms = np.maximum(band_rms, 1e-10)
+            band_rms_db = 20 * np.log10(band_rms)
+
+            # Calculate dynamic range
+            band_dr = np.percentile(band_rms_db, 95) - np.percentile(band_rms_db, 10)
+
+            # Calculate peak control (how much peaks are reduced)
+            band_peaks = band_rms_db[band_rms_db > np.percentile(band_rms_db, 80)]
+            if len(band_peaks) > 0:
+                peak_control = np.std(band_peaks)  # Lower std = more control
+            else:
+                peak_control = 10.0
+
+            band_dynamics[band_name] = {
+                'dynamic_range_db': float(band_dr),
+                'peak_control': float(peak_control),
+                'center_freq': int((low_freq + high_freq) / 2)
+            }
+
+            # Track most controlled band
+            control_score = 1.0 / (peak_control + 1e-10)
+            if control_score > max_control:
+                max_control = control_score
+                most_controlled_band = band_name
+
+        # Overall HF analysis
+        sos_hp = signal.butter(4, 4000, 'hp', fs=self.sample_rate, output='sos')
+        highs = signal.sosfilt(sos_hp, audio)
 
         hf_rms = librosa.feature.rms(y=highs, frame_length=frame_length,
                                       hop_length=hop_length)[0]
         hf_rms = np.maximum(hf_rms, 1e-10)
         hf_rms_db = 20 * np.log10(hf_rms)
-
-        # De-essing shows as:
-        # 1. Reduced dynamic range in highs
-        # 2. Controlled peaks in sibilant range
 
         hf_dynamic_range = np.percentile(hf_rms_db, 95) - np.percentile(hf_rms_db, 10)
 
@@ -205,7 +245,7 @@ class EffectsDetector:
         overall_rms_db = 20 * np.log10(overall_rms)
         overall_dynamic_range = np.percentile(overall_rms_db, 95) - np.percentile(overall_rms_db, 10)
 
-        # If high-freq dynamics are significantly more controlled
+        # Detection logic
         if overall_dynamic_range > 0:
             hf_control_ratio = hf_dynamic_range / overall_dynamic_range
 
@@ -216,26 +256,43 @@ class EffectsDetector:
             deessing_amount = 0.0
 
         # Estimate de-esser parameters
-        if deessing_detected:
+        if deessing_detected and most_controlled_band:
             # Threshold: level where HF starts getting controlled
             threshold_db = np.percentile(hf_rms_db, 60)
 
-            # Frequency: typically 5-8 kHz
-            freq_hz = 6000  # Default de-esser frequency
+            # Frequency: use center of most controlled band
+            freq_hz = band_dynamics[most_controlled_band]['center_freq']
 
-            # Ratio: how much control
-            ratio = np.clip(2.0 + (deessing_amount * 4.0), 1.0, 6.0)
+            # Ratio: based on amount of control
+            # More control = higher ratio
+            ratio = np.clip(2.0 + (deessing_amount * 4.0), 1.0, 8.0)
+
+            # Attack/Release for de-esser (typically fast)
+            attack_ms = 1.0  # Very fast attack to catch sibilants
+            release_ms = 50.0  # Medium release
+
+            # Q factor (bandwidth)
+            q_factor = 1.5  # Moderate Q for de-esser
         else:
             threshold_db = -20.0
             freq_hz = 6000
             ratio = 1.0
+            attack_ms = 1.0
+            release_ms = 50.0
+            q_factor = 1.5
 
         return {
             'detected': deessing_detected,
             'amount': float(deessing_amount),
             'threshold_db': float(threshold_db),
             'frequency_hz': float(freq_hz),
-            'ratio': float(ratio)
+            'ratio': float(ratio),
+            'attack_ms': float(attack_ms),
+            'release_ms': float(release_ms),
+            'q_factor': float(q_factor),
+            'hf_control_ratio': float(hf_control_ratio) if overall_dynamic_range > 0 else 1.0,
+            'band_analysis': band_dynamics,
+            'most_controlled_band': most_controlled_band
         }
 
     def _detect_exciter(self, audio: np.ndarray) -> Dict:
