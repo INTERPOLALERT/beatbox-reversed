@@ -111,7 +111,7 @@ class MicCalibrator:
         # LUFS (integrated loudness)
         try:
             lufs = self.meter.integrated_loudness(audio)
-        except:
+        except Exception as e:
             # Fallback if audio is too quiet
             lufs = rms_db
 

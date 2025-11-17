@@ -149,7 +149,7 @@ class ValidationEngine:
             ref_lufs = self.meter.integrated_loudness(reference)
             proc_lufs = self.meter.integrated_loudness(processed)
             lufs_diff = proc_lufs - ref_lufs
-        except:
+        except Exception as e:
             lufs_diff = rms_diff_db
 
         # Peak comparison

@@ -420,7 +420,7 @@ class MultibandProcessor:
             # Parse band index
             try:
                 idx = int(band_idx.replace('band_', ''))
-            except:
+            except Exception as e:
                 continue
 
             if idx >= self.num_bands:

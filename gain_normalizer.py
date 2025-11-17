@@ -66,7 +66,7 @@ class GainNormalizer:
                 'target_lufs': float(self.target_lufs),
                 'method': 'lufs'
             }
-        except:
+        except Exception as e:
             # Fallback to RMS if audio is too quiet or has issues
             return self._calculate_rms_gain(audio)
 
@@ -193,7 +193,7 @@ class GainNormalizer:
 
         try:
             lufs = self.meter.integrated_loudness(audio)
-        except:
+        except Exception as e:
             lufs = 20 * np.log10(rms + 1e-10)
 
         preset = {

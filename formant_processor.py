@@ -115,7 +115,7 @@ class FormantProcessor:
         try:
             filtered = signal.lfilter(b, a, audio)
             return filtered
-        except:
+        except Exception as e:
             return audio
 
     def set_formant_strength(self, boost_db: float):

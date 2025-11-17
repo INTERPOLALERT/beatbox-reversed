@@ -279,7 +279,7 @@ class AdaptiveSoundProcessor:
         try:
             filtered = signal.lfilter(b, a, audio)
             return filtered
-        except:
+        except Exception as e:
             return audio
 
     def process_buffer(self, audio_buffer: np.ndarray, enable_adaptive: bool = True) -> Tuple[np.ndarray, str]:

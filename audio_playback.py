@@ -17,7 +17,7 @@ class AudioPlayer:
 
     def __init__(self):
         """Initialize audio player"""
-        self.is_playing = False
+        self._is_playing = False
         self.playback_thread = None
         self.stop_requested = False
         self.current_file = None
@@ -31,7 +31,7 @@ class AudioPlayer:
             device: Output device index (None for default)
             callback: Optional callback when playback completes
         """
-        if self.is_playing:
+        if self._is_playing:
             self.stop()
 
         self.current_file = file_path
@@ -58,7 +58,7 @@ class AudioPlayer:
             # Load audio file
             audio, sample_rate = sf.read(file_path, always_2d=True)
 
-            self.is_playing = True
+            self._is_playing = True
 
             # Play audio
             sd.play(audio, samplerate=sample_rate, device=device)
@@ -71,7 +71,7 @@ class AudioPlayer:
             if self.stop_requested:
                 sd.stop()
 
-            self.is_playing = False
+            self._is_playing = False
 
             # Call callback if provided
             if callback and not self.stop_requested:
@@ -79,14 +79,14 @@ class AudioPlayer:
 
         except Exception as e:
             print(f"Playback error: {e}")
-            self.is_playing = False
+            self._is_playing = False
 
     def stop(self):
         """Stop playback"""
-        if self.is_playing:
+        if self._is_playing:
             self.stop_requested = True
             sd.stop()
-            self.is_playing = False
+            self._is_playing = False
 
     def is_playing(self) -> bool:
         """
@@ -95,7 +95,7 @@ class AudioPlayer:
         Returns:
             True if playing, False otherwise
         """
-        return self.is_playing
+        return self._is_playing
 
 
 def play_audio_file(file_path: str, blocking: bool = False):

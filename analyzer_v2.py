@@ -76,7 +76,7 @@ class BeatboxAnalyzerV2:
                 self.audio_stereo = audio_stereo
             else:
                 self.is_stereo = False
-        except:
+        except Exception as e:
             self.is_stereo = False
 
         print(f"Duration: {self.duration:.2f}s")
